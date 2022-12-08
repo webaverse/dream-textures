@@ -94,10 +94,10 @@ def predict():
 
 	# print(type(texture))
 
-	texture.save('test.png')
+	# texture.save('test.png')
 
 	img_byte_arr = io.BytesIO()
-	output.images[0].save(img_byte_arr, format='PNG')
+	texture.save(img_byte_arr, format='PNG')
 	img_byte_arr = img_byte_arr.getvalue()
 	response = Response(img_byte_arr, headers={'Content-Type':'image/png'})
 	response.headers['Access-Control-Allow-Origin'] = '*'
