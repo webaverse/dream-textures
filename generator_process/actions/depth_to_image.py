@@ -37,7 +37,8 @@ def depth_to_image(
             import torch
             import PIL.Image
             import PIL.ImageOps
-            from ...absolute_path import WEIGHTS_PATH
+            
+            WEIGHTS_PATH = "weights/stable-diffusion-v1.4/"
 
             final_size = depth.shape[:2]
 
@@ -216,53 +217,53 @@ def depth_to_image(
                     extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
                     # 10. Denoising loop
-                    num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
-                    with self.progress_bar(total=num_inference_steps) as progress_bar:
-                        for i, t in enumerate(timesteps):
-                            # expand the latents if we are doing classifier free guidance
-                            latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                    num_warmup_steps = len(timesteps) - num_inference_steps * 1 #self.scheduler.order
+                    # with self.progress_bar(total=num_inference_steps) as progress_bar:
+                    for i, t in enumerate(timesteps):
+                        # expand the latents if we are doing classifier free guidance
+                        latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
 
-                            # concat latents, mask, masked_image_latents in the channel dimension
-                            latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                            latent_model_input = torch.cat([latent_model_input, depth], dim=1)
+                        # concat latents, mask, masked_image_latents in the channel dimension
+                        latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                        latent_model_input = torch.cat([latent_model_input, depth], dim=1)
 
-                            # predict the noise residual
-                            noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
+                        # predict the noise residual
+                        noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 
-                            # perform guidance
-                            if do_classifier_free_guidance:
-                                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                        # perform guidance
+                        if do_classifier_free_guidance:
+                            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-                            # compute the previous noisy sample x_t -> x_t-1
-                            latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+                        # compute the previous noisy sample x_t -> x_t-1
+                        latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
 
-                            # call the callback, if provided
-                            match kwargs['step_preview_mode']:
-                                case StepPreviewMode.NONE:
-                                    yield ImageGenerationResult(
-                                        None,
+                        # call the callback, if provided
+                        match kwargs['step_preview_mode']:
+                            case StepPreviewMode.NONE:
+                                yield ImageGenerationResult(
+                                    None,
+                                    generator.initial_seed(),
+                                    i,
+                                    False
+                                )
+                            case StepPreviewMode.FAST:
+                                yield ImageGenerationResult(
+                                    np.asarray(PIL.ImageOps.flip(PIL.Image.fromarray(approximate_decoded_latents(latents))).resize(final_size, PIL.Image.Resampling.NEAREST).convert('RGBA'), dtype=np.float32) / 255.,
+                                    generator.initial_seed(),
+                                    i,
+                                    False
+                                )
+                            case StepPreviewMode.ACCURATE:
+                                yield from [
+                                    ImageGenerationResult(
+                                        np.asarray(PIL.ImageOps.flip(image).resize(final_size).convert('RGBA'), dtype=np.float32) / 255.,
                                         generator.initial_seed(),
                                         i,
                                         False
                                     )
-                                case StepPreviewMode.FAST:
-                                    yield ImageGenerationResult(
-                                        np.asarray(PIL.ImageOps.flip(PIL.Image.fromarray(approximate_decoded_latents(latents))).resize(final_size, PIL.Image.Resampling.NEAREST).convert('RGBA'), dtype=np.float32) / 255.,
-                                        generator.initial_seed(),
-                                        i,
-                                        False
-                                    )
-                                case StepPreviewMode.ACCURATE:
-                                    yield from [
-                                        ImageGenerationResult(
-                                            np.asarray(PIL.ImageOps.flip(image).resize(final_size).convert('RGBA'), dtype=np.float32) / 255.,
-                                            generator.initial_seed(),
-                                            i,
-                                            False
-                                        )
-                                        for image in self.numpy_to_pil(self.decode_latents(latents))
-                                    ]
+                                    for image in self.numpy_to_pil(self.decode_latents(latents))
+                                ]
 
                     # 11. Post-processing
                     image = self.decode_latents(latents)
@@ -282,38 +283,44 @@ def depth_to_image(
                         for image in self.numpy_to_pil(image)
                     ]
             
-            if optimizations.cpu_only:
-                device = "cpu"
-            else:
-                device = self.choose_device()
+            # if optimizations.cpu_only:
+            #     device = "cpu"
+            # else:
+            #     device = self.choose_device()
+            device = "cuda"
 
-            use_cpu_offload = optimizations.can_use("sequential_cpu_offload", device)
+            # use_cpu_offload = optimizations.can_use("sequential_cpu_offload", device)
 
             # StableDiffusionPipeline w/ caching
-            if hasattr(self, "_cached_depth2img_pipe") and self._cached_depth2img_pipe[1] == model and use_cpu_offload == self._cached_depth2img_pipe[2]:
-                pipe = self._cached_depth2img_pipe[0]
-            else:
-                storage_folder = os.path.join(WEIGHTS_PATH, model)
-                revision = "main"
-                ref_path = os.path.join(storage_folder, "refs", revision)
-                with open(ref_path) as f:
-                    commit_hash = f.read()
+            # if hasattr(self, "_cached_depth2img_pipe") and self._cached_depth2img_pipe[1] == model and use_cpu_offload == self._cached_depth2img_pipe[2]:
+            #     pipe = self._cached_depth2img_pipe[0]
+            # else:
+            #     storage_folder = os.path.join(WEIGHTS_PATH, model)
+            #     revision = "main"
+            #     ref_path = os.path.join(storage_folder, "refs", revision)
+            #     with open(ref_path) as f:
+            #         commit_hash = f.read()
 
-                snapshot_folder = os.path.join(storage_folder, "snapshots", commit_hash)
-                pipe = GeneratorPipeline.from_pretrained(
-                    "carsonkatri/stable-diffusion-2-depth-diffusers",
-                    revision="fp16" if optimizations.can_use("half_precision", device) else None,
-                    torch_dtype=torch.float16 if optimizations.can_use("half_precision", device) else torch.float32,
-                )
-                pipe = pipe.to(device)
-                setattr(self, "_cached_depth2img_pipe", (pipe, model, use_cpu_offload, snapshot_folder))
+            #     snapshot_folder = os.path.join(storage_folder, "snapshots", commit_hash)
+            #     pipe = GeneratorPipeline.from_pretrained(
+            #         "carsonkatri/stable-diffusion-2-depth-diffusers",
+            #         revision="fp16" if optimizations.can_use("half_precision", device) else None,
+            #         torch_dtype=torch.float16 if optimizations.can_use("half_precision", device) else torch.float32,
+            #     )
+            #     pipe = pipe.to(device)
+            #     setattr(self, "_cached_depth2img_pipe", (pipe, model, use_cpu_offload, snapshot_folder))
+
+            pipe = GeneratorPipeline.from_pretrained(
+                "carsonkatri/stable-diffusion-2-depth-diffusers"
+            )
+            pipe = pipe.to(device)
 
             # Scheduler
             is_stable_diffusion_2 = 'stabilityai--stable-diffusion-2' in model
-            pipe.scheduler = scheduler.create(pipe, {
-                'model_path': self._cached_depth2img_pipe[3],
-                'subfolder': 'scheduler',
-            } if is_stable_diffusion_2 else None)
+            # pipe.scheduler = scheduler.create(pipe, {
+            #     'model_path': self._cached_depth2img_pipe[3],
+            #     'subfolder': 'scheduler',
+            # } if is_stable_diffusion_2 else None)
 
             # Optimizations
             pipe = optimizations.apply(pipe, device)
